@@ -26,6 +26,7 @@
       resize:'Redimensionar',
       selectPos:'Selecionar Posição',
       preview:'Preview (overlay)',
+      adjustZoom:'Ajustar zoom',
       start:'Iniciar',
       pause:'Pausar',
       resume:'Retomar',
@@ -46,13 +47,16 @@
       sessionSaved:'💾 Sessão salva.',
       sessionLoaded:'📦 Sessão restaurada.',
       toastHit:'⚠️ Sem tinta — consolidando…',
+      toastText:'Texto do toast',
       coolingDown:'🧊 Resfriando {min}min… faltam {mmss}',
       noCanvas:'Canvas não encontrado. Abra a página do mapa.',
       openPalette:'Abra a paleta de cores do site.',
       nothingToPaint:'Nada a pintar (filtros atuais).',
       started:'🚀 Pintando…',
+      dontMove:'Não mova a tela durante a pintura.',
       mustPickPos:'Defina a posição antes de iniciar.',
       mustUpload:'Envie a imagem antes de iniciar.',
+      zoomSet:'Zoom ajustado.',
       cooldownLabel:'Cooldown após esgotar (min)',
       reopenNormal:'Reabrir paleta após commit (ms)',
       reopenDepl:'Reabrir após esgotar (ms)',
@@ -94,6 +98,7 @@
       resize:'Resize',
       selectPos:'Set Position',
       preview:'Preview (overlay)',
+      adjustZoom:'Adjust zoom',
       start:'Start',
       pause:'Pause',
       resume:'Resume',
@@ -114,13 +119,16 @@
       sessionSaved:'💾 Session saved.',
       sessionLoaded:'📦 Session restored.',
       toastHit:'⚠️ Out of paint — consolidating…',
+      toastText:'Toast text',
       coolingDown:'🧊 Cooling {min}min… left {mmss}',
       noCanvas:'Canvas not found. Open the map page.',
       openPalette:'Open the site color palette.',
       nothingToPaint:'Nothing to paint with current filters.',
       started:'🚀 Painting…',
+      dontMove:'Do not move the screen while painting.',
       mustPickPos:'Pick a position before starting.',
       mustUpload:'Upload the image before starting.',
+      zoomSet:'Zoom adjusted.',
       cooldownLabel:'Cooldown after depletion (min)',
       reopenNormal:'Reopen palette after commit (ms)',
       reopenDepl:'Reopen after depletion (ms)',
@@ -183,7 +191,7 @@
     // cooldown (manual only)
     cooldownMin: DEFAULT_COOLDOWN_MIN,
     // toast detector
-    toast:{ enabled:true, seen:false, seenAt:0, handling:false, lastSeenAt:0, observer:null, root:null },
+    toast:{ enabled:true, seen:false, seenAt:0, handling:false, lastSeenAt:0, observer:null, root:null, text:'No more charges' },
     // commit
     committing:false,
     // applied/pending
@@ -202,6 +210,8 @@
 
   state._resolvedLang = state.lang === 'auto' ? detectBrowserLang() : (state.lang||'en');
   if(!(state._resolvedLang in LANGS)) state._resolvedLang = 'en';
+
+  let screenMoveWarned = false;
 
   // tiny template helper
   function tKey(){ return LANGS[state._resolvedLang]; }
@@ -263,6 +273,16 @@
     }, ms);
   }
 
+  function warnScreenMove(){
+    if(state.running && !screenMoveWarned){
+      screenMoveWarned = true;
+      showToast(t('dontMove'), 'warn', 2500);
+    }
+  }
+  window.addEventListener('scroll', warnScreenMove, {passive:true});
+  window.addEventListener('wheel', warnScreenMove, {passive:true});
+  window.addEventListener('resize', warnScreenMove);
+
   // ===== Utils =====
   const U = {
     qs:(s,r=document)=>r.querySelector(s),
@@ -270,7 +290,6 @@
     sleep:ms=>new Promise(r=>setTimeout(r,ms)),
     clamp:(v,min,max)=>Math.max(min,Math.min(max,v)),
     colorDist(a,b){ const dr=a[0]-b[0],dg=a[1]-b[1],db=a[2]-b[2]; return Math.sqrt(dr*dr+dg*dg+db*db); },
-    log(...args){ console.log('%c[FXBot '+VERSION+']', 'color:'+THEME.neon1, ...args); },
     mmss(ms){ ms=Math.max(0,ms|0); const s=Math.ceil(ms/1000); const m=(s/60|0); return `${m}:${String(s%60).padStart(2,'0')}`; },
     toDataURL(imgData){ const c=document.createElement('canvas'); c.width=imgData.width; c.height=imgData.height; c.getContext('2d').putImageData(imgData,0,0); return c.toDataURL('image/png'); },
     async fromDataURL(dataURL){
@@ -283,7 +302,24 @@
   function getTargetCanvas(){
     return U.qs('.maplibregl-canvas') || U.qs('canvas[aria-label="Map"]') || U.qs('canvas');
   }
-  function canvasRect(){ const c=getTargetCanvas(); return c?c.getBoundingClientRect():null; }
+
+  function canvasMetrics(canvas){
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = rect.width ? canvas.width / rect.width : 1;
+    const scaleY = rect.height ? canvas.height / rect.height : 1;
+    return {rect, scaleX, scaleY};
+  }
+
+  function autoZoom(){
+    if(!state.imgData){ showToast(t('mustUpload'), 'warn'); return; }
+    const canvas = getTargetCanvas();
+    if(!canvas){ showToast(t('noCanvas'), 'warn'); return; }
+    const {rect} = canvasMetrics(canvas);
+    if(!rect.width || !state.imgWidth) return;
+    const factor = rect.width / state.imgWidth;
+    document.body.style.zoom = String(factor);
+    showToast(t('zoomSet'), 'info', 1500);
+  }
 
   // ===== Palette =====
   function extractPalette(){
@@ -313,6 +349,7 @@
       queuePtr: state.queuePtr, painted: state.painted, totalTarget: state.totalTarget,
       cooldownMin: state.cooldownMin,
       lang: state.lang,
+      toastText: state.toast.text,
       manualStart: {...state.manualStart},
       applied:{ set: Array.from(state.applied.set), pending: state.applied.pending.map(p=>({k:p.k,t:p.t, it:{x:p.it.x,y:p.it.y,colorId:p.it.colorId,rgb:p.it.rgb,canvas:p.it.canvas}})) },
       ts: Date.now()
@@ -332,6 +369,7 @@
       state.queuePtr= obj.queuePtr ?? 0; state.painted= obj.painted ?? 0; state.totalTarget = obj.totalTarget ?? 0;
       state.cooldownMin = obj.cooldownMin ?? DEFAULT_COOLDOWN_MIN;
       state.lang = obj.lang || state.lang;
+      state.toast.text = obj.toastText || state.toast.text || 'No more charges';
       state._resolvedLang = state.lang === 'auto' ? detectBrowserLang() : (state.lang||'en');
       if(!(state._resolvedLang in LANGS)) state._resolvedLang = 'en';
       if(obj.manualStart){ state.manualStart = {...state.manualStart, ...obj.manualStart}; }
@@ -399,6 +437,8 @@
           <button id="fx-preview" class="fx-btn" disabled>☯ ${t('preview')}</button>
         </div>
 
+        <button id="fx-zoom" class="fx-btn" disabled>🔍 ${t('adjustZoom')}</button>
+
         <fieldset class="box">
           <legend>🧪 Fluxo (without API)</legend>
           <div class="grid3">
@@ -412,6 +452,10 @@
               <input id="reopen-depl" type="number" min="1000" max="60000" value="${FULL_DEPLETION_REOPEN_MS}">
             </label>
           </div>
+
+          <label style="margin-top:8px;display:block">${t('toastText')}
+            <input id="toast-text" type="text" value="${state.toast.text}">
+          </label>
 
           <div class="grid3" style="margin-top:8px">
             <label>${t('manualStartLabel')}
@@ -477,6 +521,7 @@
           <div id="fx-action">—</div>
         </div>
 
+        <div class="statusline">${t('dontMove')}</div>
         <div class="statusline">${t('helpText')}</div>
       </div>
       <input id="fx-file" type="file" accept="image/png,image/jpeg" style="display:none">
@@ -512,6 +557,7 @@
     g('#fx-resize').addEventListener('click', resizeImage);
     g('#fx-pos').addEventListener('click', selectPosition);
     g('#fx-preview').addEventListener('click', toggleOverlay);
+    g('#fx-zoom').addEventListener('click', autoZoom);
 
     g('#fx-start').addEventListener('click', startPainting);
     g('#fx-pause').addEventListener('click', pausePainting);
@@ -532,6 +578,7 @@
     onInput('#cooldown-min', e=>{ state.cooldownMin = U.clamp(parseInt(e.target.value,10)||DEFAULT_COOLDOWN_MIN,1,60); saveSession('cooldown'); });
     onInput('#reopen-delay', e=>{ cfg.reopenDelay = U.clamp(parseInt(e.target.value,10)||REOPEN_DELAY_MS,500,60000); saveSession('cfg'); });
     onInput('#reopen-depl',  e=>{ cfg.reopenDepletion = U.clamp(parseInt(e.target.value,10)||FULL_DEPLETION_REOPEN_MS,1000,60000); saveSession('cfg'); });
+    onInput('#toast-text', e=>{ state.toast.text = String(e.target.value||'').trim() || 'No more charges'; saveSession('toast'); });
 
     // manual start binds
     const msChk = g('#fx-manualstart-en');
@@ -591,7 +638,6 @@
 
   function setStatus(msg){
     const el=g('#fx-status'); if(el) el.innerHTML=msg;
-    U.log(msg);
   }
   function setTopStatus(mode){
     const el=g('#fx-top-status'); if(!el) return;
@@ -659,8 +705,8 @@
 
   // ===== Position =====
   function selectPosition() {
-  const rect = canvasRect();
-  if (!rect) {
+  const canvas = getTargetCanvas();
+  if (!canvas) {
     setStatus(t('canvasNotFound'));
     return;
   }
@@ -677,9 +723,10 @@
       return;
     }
 
+    const {rect, scaleX, scaleY} = canvasMetrics(canvas);
     const tile = Math.max(1, state.pixelSize | 0);
-    const relX = e.clientX - rect.left;
-    const relY = e.clientY - rect.top;
+    const relX = (e.clientX - rect.left) * scaleX;
+    const relY = (e.clientY - rect.top) * scaleY;
     const gridX = Math.floor(relX / tile);
     const gridY = Math.floor(relY / tile);
     const imgW = Math.max(0, state.imgWidth  || 0);
@@ -719,12 +766,12 @@
 
 
   function centerPosOnCanvas(){
-    const rect=canvasRect(); if(!rect || !state.imgData) return false;
+    const canvas = getTargetCanvas(); if(!canvas || !state.imgData) return false;
     const tile=Math.max(1,state.pixelSize|0);
     const w = state.imgWidth * tile;
     const h = state.imgHeight * tile;
-    const x = Math.floor((rect.width  - w)/2);
-    const y = Math.floor((rect.height - h)/2);
+    const x = Math.floor((canvas.width  - w)/2);
+    const y = Math.floor((canvas.height - h)/2);
     state.pos = {x: Math.max(0,x), y: Math.max(0,y)};
     return true;
   }
@@ -733,7 +780,7 @@
   function ensureOverlay(){
     if(state.overlayCanvas && document.body.contains(state.overlayCanvas)) return state.overlayCanvas;
     const c=document.createElement('canvas'); c.id='fx-overlay';
-    Object.assign(c.style,{position:'fixed',pointerEvents:'none',opacity:'0.65',zIndex:999998});
+    Object.assign(c.style,{position:'fixed',pointerEvents:'none',opacity:'0.65',zIndex:999998,imageRendering:'pixelated'});
     document.body.appendChild(c); state.overlayCanvas=c;
     // Force repaint next refresh to avoid "blank" overlay after toggling
     state.overlayNeedsRepaint = true;
@@ -745,9 +792,7 @@
   if (state.overlayCanvas) {
     try {
       state.overlayCanvas.remove();
-    } catch (e) {
-      console.error(e);
-    }
+    } catch {}
     state.overlayCanvas = null;
     setStatus(t('overlayOff'));
     return;
@@ -799,9 +844,12 @@
   }
   function placeOverlay(){
     if(!state.overlayCanvas||!state.pos) return;
-    const rect=canvasRect(); if(!rect) return;
-    state.overlayCanvas.style.left=(rect.left+window.scrollX+state.pos.x)+'px';
-    state.overlayCanvas.style.top =(rect.top +window.scrollY+state.pos.y)+'px';
+    const canvas=getTargetCanvas(); if(!canvas) return;
+    const {rect, scaleX, scaleY} = canvasMetrics(canvas);
+    state.overlayCanvas.style.left=(rect.left+window.scrollX+state.pos.x*scaleX)+'px';
+    state.overlayCanvas.style.top =(rect.top +window.scrollY+state.pos.y*scaleY)+'px';
+    state.overlayCanvas.style.transformOrigin='top left';
+    state.overlayCanvas.style.transform=`scale(${scaleX},${scaleY})`;
   }
 
   // ===== Dedup =====
@@ -852,19 +900,19 @@
     setStatus(t('builtQueue', {n: state.queue.length})); state.totalTarget = state.applied.set.size + state.queue.length; updateProgress();
   }
   function imageToCanvas(ix,iy){
-    const rect=canvasRect(); if(!rect||!state.pos) return null;
+    const canvas=getTargetCanvas(); if(!canvas||!state.pos) return null;
     const s=Math.max(1,state.pixelSize|0);
     const x=state.pos.x + ix*s + Math.floor(s/2);
     const y=state.pos.y + iy*s + Math.floor(s/2);
-    if(x<0||y<0||x>rect.width||y>rect.height) return null;
+    if(x<0||y<0||x>=canvas.width||y>=canvas.height) return null;
     return {x,y};
   }
 
   // ===== Clicks =====
   function clickCanvasSynthetic(canvas, cx, cy){
-    const rect=canvasRect(); if(!rect) return;
-    const absX=Math.round(rect.left + cx);
-    const absY=Math.round(rect.top  + cy);
+    const {rect, scaleX, scaleY} = canvasMetrics(canvas);
+    const absX=Math.round(rect.left + cx*scaleX);
+    const absY=Math.round(rect.top  + cy*scaleY);
     const common={clientX:absX, clientY:absY, bubbles:true, cancelable:true, pointerId:1, isPrimary:true, buttons:1};
 
     canvas.dispatchEvent(new PointerEvent('pointerdown', {...common, button:0}));
@@ -963,7 +1011,8 @@
       if(state.toast.observer) return;
       const root = getToastRoot();
       state.toast.root = root;
-      const re = /Acabou a tinta|Out of paint/i;
+      const phrases = [state.toast.text || 'No more charges', 'Acabou a tinta', 'Out of paint'];
+      const re = new RegExp(phrases.filter(Boolean).map(p=>p.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')).join('|'),'i');
       const obs = new MutationObserver((muts)=>{
         if(state.toast.handling) return;
         const now = U.now();
@@ -992,7 +1041,6 @@
       obs.observe(root, {subtree:true, childList:true}); // light
       state.toast.observer = obs;
     }catch(e){
-      U.log('Toast observer failed:', e);
     }
   }
   function stopToastObserver(){
@@ -1043,7 +1091,6 @@
       state.paused = false; updateButtons(); setTopStatus('run');
       showToast(t('resumed') || t('resumed'), 'info', 1800);
     }catch(e){
-      U.log('handleInkDepletedToast error:', e);
     }finally{
       state.toast.handling = false;
     }
@@ -1076,6 +1123,8 @@
     startUITicker();
     startToastObserver();
     showToast(t('started'), 'info', 1600);
+    showToast(t('dontMove'), 'warn', 2200);
+    screenMoveWarned = false;
 
     if(state.turbo) mainLoopTurbo(); else mainLoopClassic();
   }
@@ -1232,11 +1281,12 @@
     const cd = g('#cooldown-min'); if(cd) cd.value = String(state.cooldownMin);
     const rd = g('#reopen-delay'); if(rd) rd.value = String(cfg.reopenDelay);
     const rdd= g('#reopen-depl');  if(rdd) rdd.value= String(cfg.reopenDepletion);
+    const tt = g('#toast-text'); if(tt) tt.value = state.toast.text;
 
     const msChk = g('#fx-manualstart-en'); if(msChk) msChk.checked = !!state.manualStart.enabled;
     const msIdx = g('#fx-manualstart-idx'); if(msIdx){ msIdx.value = String(state.manualStart.index||0); msIdx.disabled = !state.manualStart.enabled; }
   }
-  function enableAfterImg(){ g('#fx-resize').disabled=false; g('#fx-pos').disabled=false; g('#fx-preview').disabled=false; g('#fx-start').disabled=false; }
+  function enableAfterImg(){ g('#fx-resize').disabled=false; g('#fx-pos').disabled=false; g('#fx-preview').disabled=false; g('#fx-zoom').disabled=false; g('#fx-start').disabled=false; }
 
   // ===== Drag =====
   function makeDraggable(panel, handle){
