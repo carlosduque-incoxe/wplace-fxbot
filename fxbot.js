@@ -26,6 +26,7 @@
       resize:'Redimensionar',
       selectPos:'Selecionar Posição',
       preview:'Preview (overlay)',
+      adjustZoom:'Ajustar zoom',
       start:'Iniciar',
       pause:'Pausar',
       resume:'Retomar',
@@ -52,8 +53,10 @@
       openPalette:'Abra a paleta de cores do site.',
       nothingToPaint:'Nada a pintar (filtros atuais).',
       started:'🚀 Pintando…',
+      dontMove:'Não mova a tela durante a pintura.',
       mustPickPos:'Defina a posição antes de iniciar.',
       mustUpload:'Envie a imagem antes de iniciar.',
+      zoomSet:'Zoom ajustado.',
       cooldownLabel:'Cooldown após esgotar (min)',
       reopenNormal:'Reabrir paleta após commit (ms)',
       reopenDepl:'Reabrir após esgotar (ms)',
@@ -95,6 +98,7 @@
       resize:'Resize',
       selectPos:'Set Position',
       preview:'Preview (overlay)',
+      adjustZoom:'Adjust zoom',
       start:'Start',
       pause:'Pause',
       resume:'Resume',
@@ -121,8 +125,10 @@
       openPalette:'Open the site color palette.',
       nothingToPaint:'Nothing to paint with current filters.',
       started:'🚀 Painting…',
+      dontMove:'Do not move the screen while painting.',
       mustPickPos:'Pick a position before starting.',
       mustUpload:'Upload the image before starting.',
+      zoomSet:'Zoom adjusted.',
       cooldownLabel:'Cooldown after depletion (min)',
       reopenNormal:'Reopen palette after commit (ms)',
       reopenDepl:'Reopen after depletion (ms)',
@@ -205,6 +211,8 @@
   state._resolvedLang = state.lang === 'auto' ? detectBrowserLang() : (state.lang||'en');
   if(!(state._resolvedLang in LANGS)) state._resolvedLang = 'en';
 
+  let screenMoveWarned = false;
+
   // tiny template helper
   function tKey(){ return LANGS[state._resolvedLang]; }
   function t(id, params){
@@ -265,6 +273,16 @@
     }, ms);
   }
 
+  function warnScreenMove(){
+    if(state.running && !screenMoveWarned){
+      screenMoveWarned = true;
+      showToast(t('dontMove'), 'warn', 2500);
+    }
+  }
+  window.addEventListener('scroll', warnScreenMove, {passive:true});
+  window.addEventListener('wheel', warnScreenMove, {passive:true});
+  window.addEventListener('resize', warnScreenMove);
+
   // ===== Utils =====
   const U = {
     qs:(s,r=document)=>r.querySelector(s),
@@ -291,6 +309,19 @@
     const scaleY = rect.height ? canvas.height / rect.height : 1;
     return {rect, scaleX, scaleY};
   }
+
+
+  function autoZoom(){
+    if(!state.imgData){ showToast(t('mustUpload'), 'warn'); return; }
+    const canvas = getTargetCanvas();
+    if(!canvas){ showToast(t('noCanvas'), 'warn'); return; }
+    const {rect} = canvasMetrics(canvas);
+    if(!rect.width || !state.imgWidth) return;
+    const factor = rect.width / state.imgWidth;
+    document.body.style.zoom = String(factor);
+    showToast(t('zoomSet'), 'info', 1500);
+  }
+
 
   // ===== Palette =====
   function extractPalette(){
@@ -408,6 +439,8 @@
           <button id="fx-preview" class="fx-btn" disabled>☯ ${t('preview')}</button>
         </div>
 
+        <button id="fx-zoom" class="fx-btn" disabled>🔍 ${t('adjustZoom')}</button>
+
         <fieldset class="box">
           <legend>🧪 Fluxo (without API)</legend>
           <div class="grid3">
@@ -490,6 +523,7 @@
           <div id="fx-action">—</div>
         </div>
 
+        <div class="statusline">${t('dontMove')}</div>
         <div class="statusline">${t('helpText')}</div>
       </div>
       <input id="fx-file" type="file" accept="image/png,image/jpeg" style="display:none">
@@ -525,6 +559,7 @@
     g('#fx-resize').addEventListener('click', resizeImage);
     g('#fx-pos').addEventListener('click', selectPosition);
     g('#fx-preview').addEventListener('click', toggleOverlay);
+    g('#fx-zoom').addEventListener('click', autoZoom);
 
     g('#fx-start').addEventListener('click', startPainting);
     g('#fx-pause').addEventListener('click', pausePainting);
@@ -1090,6 +1125,8 @@
     startUITicker();
     startToastObserver();
     showToast(t('started'), 'info', 1600);
+    showToast(t('dontMove'), 'warn', 2200);
+    screenMoveWarned = false;
 
     if(state.turbo) mainLoopTurbo(); else mainLoopClassic();
   }
@@ -1251,7 +1288,7 @@
     const msChk = g('#fx-manualstart-en'); if(msChk) msChk.checked = !!state.manualStart.enabled;
     const msIdx = g('#fx-manualstart-idx'); if(msIdx){ msIdx.value = String(state.manualStart.index||0); msIdx.disabled = !state.manualStart.enabled; }
   }
-  function enableAfterImg(){ g('#fx-resize').disabled=false; g('#fx-pos').disabled=false; g('#fx-preview').disabled=false; g('#fx-start').disabled=false; }
+  function enableAfterImg(){ g('#fx-resize').disabled=false; g('#fx-pos').disabled=false; g('#fx-preview').disabled=false; g('#fx-zoom').disabled=false; g('#fx-start').disabled=false; }
 
   // ===== Drag =====
   function makeDraggable(panel, handle){
