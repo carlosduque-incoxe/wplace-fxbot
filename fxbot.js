@@ -310,6 +310,7 @@
     return {rect, scaleX, scaleY};
   }
 
+
   function autoZoom(){
     if(!state.imgData){ showToast(t('mustUpload'), 'warn'); return; }
     const canvas = getTargetCanvas();
@@ -320,6 +321,7 @@
     document.body.style.zoom = String(factor);
     showToast(t('zoomSet'), 'info', 1500);
   }
+
 
   // ===== Palette =====
   function extractPalette(){
